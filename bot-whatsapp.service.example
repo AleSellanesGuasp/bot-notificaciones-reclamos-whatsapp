@@ -1,0 +1,15 @@
+[Unit]
+Description=Bot de WhatsApp para notificacion de reclamos
+After=network.target
+
+[Service]
+Type=simple
+User=tu_usuario
+WorkingDirectory=/ruta/a/tu/proyecto
+ExecStart=/usr/bin/xvfb-run -a /ruta/a/tu/proyecto/venv/bin/python /ruta/a/tu/proyecto/bot_whatsapp_reclamos.py
+Restart=on-failure
+RestartSec=15
+Environment=HOME=/home/tu_usuario
+
+[Install]
+WantedBy=multi-user.target

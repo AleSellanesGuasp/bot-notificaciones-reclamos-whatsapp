@@ -1,0 +1,26 @@
+# Configuración sensible
+.env
+
+# Sesión de WhatsApp (MUY sensible: permite controlar la cuenta sin QR)
+sesion_whatsapp/
+
+# Bases de datos y logs (contienen datos reales de reclamos)
+*.db
+bot_log.txt
+
+# Entorno virtual
+venv/
+
+# Capturas de pantalla de depuración
+*.png
+qr_para_escanear.png
+
+# Scripts de prueba (ya integrados en bot_whatsapp_reclamos.py)
+enviar_whatsapp.py
+leer_reclamos.py
+login_whatsapp.py
+probar_mencion.py
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
