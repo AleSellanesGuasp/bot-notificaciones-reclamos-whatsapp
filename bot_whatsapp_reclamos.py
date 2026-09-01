@@ -14,6 +14,7 @@ CARPETA_SESION = "sesion_whatsapp"
 NOMBRE_GRUPO = os.environ["NOMBRE_GRUPO"]
 INTERVALO_SEGUNDOS = int(os.environ["INTERVALO_SEGUNDOS"])
 DIAS_SEMANA = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes"}
+CONTACTOS_AUTORIZADOS = set(nombre.strip() for nombre in os.environ["CONTACTOS_AUTORIZADOS"].split(","))
 HORA_INICIO_TRABAJO = (6, 50)
 HORA_FIN_TRABAJO = (18, 0)
 PLANTILLAS_SALUDO = [
@@ -371,7 +372,14 @@ def revisar_mensajes_privados(pagina):
         primera_linea_fila = texto_fila.split("\n")[0].strip()
 
         if primera_linea_fila in nombres_grupos:
-            continue  # es un grupo, no un privado
+            continue
+
+        if primera_linea_fila not in CONTACTOS_AUTORIZADOS:
+            fila.click()  # abrimos igual, para marcarlo como leído y que no quede repitiéndose cada 15s
+            pagina.wait_for_timeout(1000)
+            registrar(f"Mensaje privado IGNORADO (no autorizado): '{primera_linea_fila}'")
+            abrir_grupo(pagina)
+            continue
 
         fila.click()
         pagina.wait_for_timeout(1500)
