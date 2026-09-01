@@ -1,17 +1,56 @@
 from dotenv import load_dotenv
 load_dotenv()
-import os
 import sqlite3
 import os
 import time
+import random
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
 RUTA_NOTIFICACIONES = "notificaciones.db"
-RUTA_INVENTARIO = os.environ["RUTA_INVENTARIO"]
+RUTA_BD = os.environ["RUTA_BD_DONDE_CONSULTA"]
 CARPETA_SESION = "sesion_whatsapp"
 NOMBRE_GRUPO = os.environ["NOMBRE_GRUPO"]
 INTERVALO_SEGUNDOS = int(os.environ["INTERVALO_SEGUNDOS"])
+DIAS_SEMANA = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes"}
+HORA_INICIO_TRABAJO = (6, 50)
+HORA_FIN_TRABAJO = (18, 0)
+PLANTILLAS_SALUDO = [
+    "Buen día a todos, feliz {dia} 💪 Iniciamos con todo las actividades de hoy.",
+    "¡Feliz {dia} para todo el equipo! Que tengamos una jornada productiva.",
+    "Buen día, feliz {dia}. Arrancamos con energía 🚀",
+    "¡Feliz {dia}! A darle con todo hoy.",
+]
+fecha_ultimo_saludo = None
+
+en_horario_laboral_anterior = None  # global, para detectar el cambio de estado
+
+def dentro_de_horario_laboral():
+    ahora = datetime.now()
+    if ahora.weekday() > 4:  # sábado=5, domingo=6 → fuera de horario directo
+        return False
+    minutos_actuales = ahora.hour * 60 + ahora.minute
+    minutos_inicio = HORA_INICIO_TRABAJO[0] * 60 + HORA_INICIO_TRABAJO[1]
+    minutos_fin = HORA_FIN_TRABAJO[0] * 60 + HORA_FIN_TRABAJO[1]
+    return minutos_inicio <= minutos_actuales <= minutos_fin
+
+def verificar_cambio_de_horario():
+    global en_horario_laboral_anterior
+    en_horario_ahora = dentro_de_horario_laboral()
+
+    if en_horario_laboral_anterior is None:
+        # primera vuelta del bucle, solo guardamos el estado sin loguear
+        en_horario_laboral_anterior = en_horario_ahora
+        return en_horario_ahora
+
+    if en_horario_ahora != en_horario_laboral_anterior:
+        if en_horario_ahora:
+            registrar("Entrando en horario laboral (06:50-18:00) — reanudando actividad")
+        else:
+            registrar("Fuera de horario laboral — en pausa hasta mañana 06:50")
+        en_horario_laboral_anterior = en_horario_ahora
+
+    return en_horario_ahora
 
 def registrar(mensaje):
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -33,7 +72,7 @@ def obtener_conexion_notificaciones():
     return conexion
 
 def obtener_reclamos_todos():
-    conexion = sqlite3.connect(f"file:{RUTA_INVENTARIO}?mode=ro", uri=True)
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
     consulta = """
@@ -96,6 +135,31 @@ def texto_busqueda_mencion(nombre):
             break
         seguro += caracter
     return seguro if seguro else nombre
+
+def enviar_mensaje_simple(pagina, texto):
+    caja_mensaje = pagina.locator("footer div[contenteditable='true']")
+    caja_mensaje.click()
+    pagina.keyboard.press("Control+A")
+    pagina.keyboard.press("Delete")
+    caja_mensaje.press_sequentially(texto, delay=80)
+    caja_mensaje.press("Enter")
+    pagina.wait_for_timeout(1000)
+    
+def verificar_saludo_diario(pagina):
+    global fecha_ultimo_saludo
+    ahora = datetime.now()
+    hoy = ahora.date()
+
+    if ahora.weekday() > 4:
+        return
+
+    if ahora.hour == 15 and fecha_ultimo_saludo != hoy:
+        dia_texto = DIAS_SEMANA[ahora.weekday()]
+        mensaje = random.choice(PLANTILLAS_SALUDO).format(dia=dia_texto)
+
+        enviar_mensaje_simple(pagina, mensaje)   # <- sacamos abrir_grupo(pagina) de acá
+        fecha_ultimo_saludo = hoy
+        registrar(f"Saludo diario enviado: {mensaje}")
 
 def enviar_mensaje_con_mencion(pagina, texto_antes, nombre_busqueda, texto_despues=""):
     caja_mensaje = pagina.locator("footer div[contenteditable='true']")
@@ -210,10 +274,17 @@ with sync_playwright() as p:
     
     try:
         while True:
-            try:
-                revisar_y_notificar(pagina, conexion_notif)
-            except Exception as error:
-                registrar(f"ERROR durante la revisión: {error}")
+            if verificar_cambio_de_horario():
+                try:
+                    verificar_saludo_diario(pagina)
+                except Exception as e:
+                    registrar(f"Error al enviar saludo diario: {e}")
+
+                try:
+                    revisar_y_notificar(pagina, conexion_notif)
+                except Exception as error:
+                    registrar(f"ERROR durante la revisión: {error}")
+
             time.sleep(INTERVALO_SEGUNDOS)
     except KeyboardInterrupt:
         registrar("Detenido manualmente (Ctrl+C).")
