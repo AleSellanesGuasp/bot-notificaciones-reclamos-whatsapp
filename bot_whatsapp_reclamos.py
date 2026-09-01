@@ -239,7 +239,7 @@ def obtener_nombres_de_grupos(pagina):
     nombres = set()
     for i in range(filas.count()):
         texto = filas.nth(i).inner_text()
-        primera_linea = texto.split("\n")[0].strip()
+        primera_linea = obtener_nombre_real_de_fila(texto)
         if primera_linea:
             nombres.add(primera_linea)
 
@@ -361,6 +361,15 @@ def revisar_y_notificar(pagina, conexion_notif):
         else:
             registrar(f"ADVERTENCIA: Reclamo {reclamo['id']} (reasignado) NO enviado. Motivo: {motivo}")
 
+def obtener_nombre_real_de_fila(texto_fila):
+    """Devuelve la primera línea de la fila que no sea el indicador de 'no leído',
+    porque a veces WhatsApp Web ordena ese texto antes del nombre del contacto."""
+    for linea in texto_fila.split("\n"):
+        linea = linea.strip()
+        if linea and not re.search(r'mensaje.*no le[ií]do', linea, re.IGNORECASE):
+            return linea
+    return texto_fila.split("\n")[0].strip()
+
 def revisar_mensajes_privados(pagina):
     no_leidos = pagina.locator("[aria-label*='no leído']")
     cantidad = no_leidos.count()
@@ -369,7 +378,7 @@ def revisar_mensajes_privados(pagina):
         elemento = no_leidos.nth(i)
         fila = elemento.locator("xpath=ancestor::div[@data-testid='cell-frame-container']").first
         texto_fila = fila.inner_text()
-        primera_linea_fila = texto_fila.split("\n")[0].strip()
+        primera_linea_fila = obtener_nombre_real_de_fila(texto_fila)
 
         if primera_linea_fila in nombres_grupos:
             continue
