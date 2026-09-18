@@ -34,15 +34,30 @@ Escribí: estado #45
 Escribí: stock toner
 📦 *Pedir tóner para una impresora*
 Escribí: pedir toner [número de serie]
-Escribime cualquiera de estas opciones tal como aparecen arriba y te ayudo enseguida."""
+Escribime cualquiera de estas opciones tal como aparecen arriba y te ayudo enseguida.
+🖥️ *Consultar un equipo por código patrimonial, IP, MAC o N° de serie*
+Escribí: equipo 60690
+🗂️ *Ver historial de reclamos de un equipo*
+Escribí: historial 60690"""
 
 nombres_grupos = set()  # se completa una sola vez al arrancar, con obtener_nombres_de_grupos()
 
 en_horario_laboral_anterior = None  # global, para detectar el cambio de estado
 
+def es_feriado_hoy():
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
+    cursor = conexion.cursor()
+    hoy_str = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("SELECT titulo FROM fechas_clave WHERE tipo = 'feriado' AND fecha = ?", (hoy_str,))
+    fila = cursor.fetchone()
+    conexion.close()
+    return fila[0] if fila else None
+
 def dentro_de_horario_laboral():
     ahora = datetime.now()
-    if ahora.weekday() > 4:  # sábado=5, domingo=6 → fuera de horario directo
+    if ahora.weekday() > 4:  # sábado=5, domingo=6
+        return False
+    if es_feriado_hoy():  # <-- ahora consulta la BD real, no una librería
         return False
     minutos_actuales = ahora.hour * 60 + ahora.minute
     minutos_inicio = HORA_INICIO_TRABAJO[0] * 60 + HORA_INICIO_TRABAJO[1]
@@ -124,19 +139,21 @@ def marcar_notificado(conexion_notif, reclamo_id, tecnico_id, tecnico_nombre_com
 
 def armar_texto_nuevo(fila):
     nombre_busqueda = texto_busqueda_mencion(fila['tecnico_nombre'])
+    reportante = f" - {fila['nombre_reporta']}" if fila['nombre_reporta'] else ""
     texto_antes = (
         f"📋 #{fila['id']} {fila['descripcion']} - {fila['oficina_nombre']} "
-        f"{fila['piso']}/{fila['bloque']} - {fila['nombre_reporta']} "
+        f"{fila['piso']}/{fila['bloque']}{reportante} "
         f"@{nombre_busqueda}"
     )
     return texto_antes, ""
 
 def armar_texto_reasignado(fila, nombre_tecnico_anterior):
     nombre_busqueda = texto_busqueda_mencion(fila['tecnico_nombre'])
+    reportante = f" - {fila['nombre_reporta']}" if fila['nombre_reporta'] else ""
     texto_antes = f"🔄 Reclamo reasignado de {nombre_tecnico_anterior} a @{nombre_busqueda}"
     texto_despues = (
         f": 📋 #{fila['id']} {fila['descripcion']} - {fila['oficina_nombre']} "
-        f"{fila['piso']}/{fila['bloque']} - {fila['nombre_reporta']}"
+        f"{fila['piso']}/{fila['bloque']}{reportante}"
     )
     return texto_antes, texto_despues
 
@@ -150,6 +167,9 @@ def texto_busqueda_mencion(nombre):
             break
         seguro += caracter
     return seguro if seguro else nombre
+
+def normalizar_mac(texto):
+    return re.sub(r'[^0-9A-F]', '', texto.upper())
 
 def enviar_mensaje_simple(pagina, texto):
     caja_mensaje = pagina.locator("footer div[contenteditable='true']")
@@ -166,7 +186,20 @@ def enviar_mensaje_simple(pagina, texto):
 
     caja_mensaje.press("Enter")
     pagina.wait_for_timeout(1000)
-    
+ 
+def obtener_cumpleaneros_hoy():
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
+    conexion.row_factory = sqlite3.Row
+    cursor = conexion.cursor()
+    hoy_mes_dia = datetime.now().strftime("%m-%d")
+    cursor.execute(
+        "SELECT titulo FROM fechas_clave WHERE tipo = 'cumpleanos' AND strftime('%m-%d', fecha) = ?",
+        (hoy_mes_dia,)
+    )
+    filas = cursor.fetchall()
+    conexion.close()
+    return [fila["titulo"].title() for fila in filas]
+
 def verificar_saludo_diario(pagina):
     global fecha_ultimo_saludo
     ahora = datetime.now()
@@ -179,7 +212,14 @@ def verificar_saludo_diario(pagina):
         dia_texto = DIAS_SEMANA[ahora.weekday()]
         mensaje = random.choice(PLANTILLAS_SALUDO).format(dia=dia_texto)
 
-        enviar_mensaje_simple(pagina, mensaje)   # <- sacamos abrir_grupo(pagina) de acá
+        cumpleaneros = obtener_cumpleaneros_hoy()
+        if len(cumpleaneros) == 1:
+            mensaje += f"\n\n🎉🎂 ¡Hoy cumple años {cumpleaneros[0]}! Que tengas un día increíble. 🎈"
+        elif len(cumpleaneros) > 1:
+            nombres = ", ".join(cumpleaneros[:-1]) + f" y {cumpleaneros[-1]}"
+            mensaje += f"\n\n🎉🎂 ¡Hoy cumplen años {nombres}! Que tengan un día increíble. 🎈"
+
+        enviar_mensaje_simple(pagina, mensaje)
         fecha_ultimo_saludo = hoy
         registrar(f"Saludo diario enviado: {mensaje}")
 
@@ -250,14 +290,15 @@ def obtener_nombres_de_grupos(pagina):
 
 def clasificar_comando(texto):
     texto = texto.strip().lower()
-    coincidencia = re.match(r'^estado\s*#?\s*(\d+)$', texto)
-    if coincidencia:
-        return ("estado", coincidencia.group(1))
-    if re.match(r'^stock(\s+de)?\s+t[oó]ner$', texto):
-        return ("stock", None)
-    coincidencia = re.match(r'^pedir\s+t[oó]ner\s+(.+)$', texto)
-    if coincidencia:
-        return ("pedir_toner", coincidencia.group(1).strip())
+    m = re.match(r'^estado\s*#?\s*(\d+)$', texto)
+    if m: return ("estado", m.group(1))
+    if re.match(r'^stock(\s+de)?\s+t[oó]ner$', texto): return ("stock", None)
+    m = re.match(r'^equipo\s+(.+)$', texto)
+    if m: return ("equipo", m.group(1).strip())
+    m = re.match(r'^pedir\s+t[oó]ner\s+(.+)$', texto)
+    if m: return ("pedir_toner", m.group(1).strip())
+    m = re.match(r'^historial\s+(.+)$', texto)
+    if m: return ("historial", m.group(1).strip())
     return (None, None)
 
 def obtener_stock_toner():
@@ -301,6 +342,72 @@ def obtener_reclamo_por_id(id_reclamo):
     fila = cursor.fetchone()
     conexion.close()
     return fila
+
+def buscar_equipo(dato):
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
+    conexion.row_factory = sqlite3.Row
+    cursor = conexion.cursor()
+    dato = dato.strip()
+
+    for columna in ("cod_patrim", "codigo_equipo", "ip", "num_serie"):
+        cursor.execute(f"SELECT * FROM equipos WHERE UPPER({columna}) = UPPER(?)", (dato,))
+        fila = cursor.fetchone()
+        if fila:
+            conexion.close()
+            return fila
+
+    mac_normalizada = normalizar_mac(dato)
+    fila = None
+    if mac_normalizada:
+        cursor.execute("""
+            SELECT * FROM equipos
+            WHERE REPLACE(REPLACE(REPLACE(UPPER(mac_address), '-', ''), ':', ''), '.', '') = ?
+        """, (mac_normalizada,))
+        fila = cursor.fetchone()
+
+    conexion.close()
+    return fila
+
+def armar_respuesta_equipo(fila):
+    if fila is None:
+        return "No encontré ningún equipo con esa IP, MAC o número de serie. Verificá el dato e intentá de nuevo."
+    lineas = [
+        f"💻 Equipo {fila['codigo_equipo']} — {fila['marca']} {fila['modelo']}",
+        f"Ubicación: {fila['ubicacion']} {fila['piso']}/{fila['bloque']}",
+        f"Estado: {fila['estado']}",
+    ]
+    if fila['ip']:
+        lineas.append(f"IP: {fila['ip']}")
+    if fila['mac_address']:
+        lineas.append(f"MAC: {fila['mac_address']}")
+    if fila['hostname']:
+        lineas.append(f"Hostname: {fila['hostname']}")
+    if fila['num_serie']:
+        lineas.append(f"N° de serie: {fila['num_serie']}")
+    return "\n".join(lineas)
+
+def obtener_historial_reclamos_equipo(equipo_id, limite=3):
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
+    conexion.row_factory = sqlite3.Row
+    cursor = conexion.cursor()
+    cursor.execute("""
+        SELECT fecha, valor_nuevo
+        FROM historial_equipo
+        WHERE equipo_id = ? AND campo = 'estado_reclamo'
+        ORDER BY fecha DESC
+        LIMIT ?
+    """, (equipo_id, limite))
+    filas = cursor.fetchall()
+    conexion.close()
+    return filas
+
+def armar_respuesta_historial(fila_equipo, historial):
+    if not historial:
+        return f"El equipo {fila_equipo['codigo_equipo']} no tiene reclamos registrados en su historial."
+    lineas = [f"🗂️ Historial de {fila_equipo['codigo_equipo']} ({fila_equipo['marca']} {fila_equipo['modelo']}):", ""]
+    for fila in historial:
+        lineas.append(f"📅 {fila['fecha']}\n{fila['valor_nuevo']}\n")
+    return "\n".join(lineas)
 
 def armar_respuesta_estado(id_reclamo):
     fila = obtener_reclamo_por_id(id_reclamo)
@@ -413,6 +520,15 @@ def revisar_mensajes_privados(pagina):
             enviar_mensaje_simple(pagina, armar_respuesta_estado(dato))
         elif tipo == "stock":
             enviar_mensaje_simple(pagina, armar_respuesta_stock())
+        elif tipo == "equipo":
+            enviar_mensaje_simple(pagina, armar_respuesta_equipo(buscar_equipo(dato)))
+        elif tipo == "historial":
+            equipo = buscar_equipo(dato)
+            if equipo is None:
+                enviar_mensaje_simple(pagina, "No encontré ningún equipo con esa IP, MAC o número de serie.")
+            else:
+                historial = obtener_historial_reclamos_equipo(equipo["id"])
+                enviar_mensaje_simple(pagina, armar_respuesta_historial(equipo, historial))
         elif tipo == "pedir_toner":
             registrar(f"(Todavía no implementado: pedir tóner para serie '{dato}')")
             enviar_mensaje_simple(pagina, "Por ahora esa función todavía no está disponible, estamos trabajando en ella. 🙏")
