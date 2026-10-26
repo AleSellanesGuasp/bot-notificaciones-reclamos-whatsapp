@@ -47,8 +47,8 @@ en_horario_laboral_anterior = None  # global, para detectar el cambio de estado
 def es_feriado_hoy():
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
     cursor = conexion.cursor()
-    hoy_str = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("SELECT titulo FROM fechas_clave WHERE tipo = 'feriado' AND fecha = ?", (hoy_str,))
+    hoy_str = datetime.now().strftime("%m-%d")
+    cursor.execute("SELECT titulo FROM fechas_clave WHERE tipo = 'feriado' AND strftime('%m-%d', fecha) = ?", (hoy_str,))
     fila = cursor.fetchone()
     conexion.close()
     return fila[0] if fila else None
