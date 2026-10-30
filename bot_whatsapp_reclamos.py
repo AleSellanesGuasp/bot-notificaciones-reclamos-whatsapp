@@ -25,6 +25,7 @@ PLANTILLAS_SALUDO = [
     "Buen {dia} equipo, Arriba!! A Ganaaaarrr😎.",
 ]
 fecha_ultimo_saludo = None
+fecha_ultimo_recordatorio = None
 
 MENSAJE_MENU = """👋 ¡Hola! Soy Ticto, el asistente del Departamento Operativo.
 Puedo ayudarte con esto:
@@ -44,6 +45,7 @@ nombres_grupos = set()  # se completa una sola vez al arrancar, con obtener_nomb
 
 en_horario_laboral_anterior = None  # global, para detectar el cambio de estado
 
+
 def es_feriado_hoy():
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
     cursor = conexion.cursor()
@@ -52,6 +54,7 @@ def es_feriado_hoy():
     fila = cursor.fetchone()
     conexion.close()
     return fila[0] if fila else None
+
 
 def dentro_de_horario_laboral():
     ahora = datetime.now()
@@ -63,6 +66,7 @@ def dentro_de_horario_laboral():
     minutos_inicio = HORA_INICIO_TRABAJO[0] * 60 + HORA_INICIO_TRABAJO[1]
     minutos_fin = HORA_FIN_TRABAJO[0] * 60 + HORA_FIN_TRABAJO[1]
     return minutos_inicio <= minutos_actuales <= minutos_fin
+
 
 def verificar_cambio_de_horario():
     global en_horario_laboral_anterior
@@ -82,12 +86,14 @@ def verificar_cambio_de_horario():
 
     return en_horario_ahora
 
+
 def registrar(mensaje):
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     linea = f"[{ahora}] {mensaje}"
     print(linea)
     with open("bot_log.txt", "a", encoding="utf-8") as archivo:
         archivo.write(linea + "\n")
+
 
 def obtener_conexion_notificaciones():
     conexion = sqlite3.connect(RUTA_NOTIFICACIONES)
@@ -100,6 +106,7 @@ def obtener_conexion_notificaciones():
     """)
     conexion.commit()
     return conexion
+
 
 def obtener_reclamos_todos():
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
@@ -126,9 +133,11 @@ def obtener_reclamos_todos():
     conexion.close()
     return filas
 
+
 def obtener_registros_notificados(conexion_notif):
     cursor = conexion_notif.execute("SELECT reclamo_id, tecnico_id_notificado, tecnico_nombre_notificado FROM notificados")
     return {fila[0]: (fila[1], fila[2]) for fila in cursor.fetchall()}
+
 
 def marcar_notificado(conexion_notif, reclamo_id, tecnico_id, tecnico_nombre_completo):
     conexion_notif.execute(
@@ -136,6 +145,7 @@ def marcar_notificado(conexion_notif, reclamo_id, tecnico_id, tecnico_nombre_com
         (reclamo_id, tecnico_id, tecnico_nombre_completo)
     )
     conexion_notif.commit()
+
 
 def armar_texto_nuevo(fila):
     nombre_busqueda = texto_busqueda_mencion(fila['tecnico_nombre'])
@@ -147,6 +157,7 @@ def armar_texto_nuevo(fila):
     )
     return texto_antes, ""
 
+
 def armar_texto_reasignado(fila, nombre_tecnico_anterior):
     nombre_busqueda = texto_busqueda_mencion(fila['tecnico_nombre'])
     reportante = f" - {fila['nombre_reporta']}" if fila['nombre_reporta'] else ""
@@ -156,6 +167,7 @@ def armar_texto_reasignado(fila, nombre_tecnico_anterior):
         f"{fila['piso']}/{fila['bloque']}{reportante}"
     )
     return texto_antes, texto_despues
+
 
 def texto_busqueda_mencion(nombre):
     """Devuelve la parte del nombre segura para tipear (sin tildes/ñ/etc.),
@@ -168,8 +180,10 @@ def texto_busqueda_mencion(nombre):
         seguro += caracter
     return seguro if seguro else nombre
 
+
 def normalizar_mac(texto):
     return re.sub(r'[^0-9A-F]', '', texto.upper())
+
 
 def enviar_mensaje_simple(pagina, texto):
     caja_mensaje = pagina.locator("footer div[contenteditable='true']")
@@ -187,6 +201,7 @@ def enviar_mensaje_simple(pagina, texto):
     caja_mensaje.press("Enter")
     pagina.wait_for_timeout(1000)
  
+ 
 def obtener_cumpleaneros_hoy():
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
     conexion.row_factory = sqlite3.Row
@@ -199,6 +214,7 @@ def obtener_cumpleaneros_hoy():
     filas = cursor.fetchall()
     conexion.close()
     return [fila["titulo"].title() for fila in filas]
+
 
 def verificar_saludo_diario(pagina):
     global fecha_ultimo_saludo
@@ -222,6 +238,39 @@ def verificar_saludo_diario(pagina):
         enviar_mensaje_simple(pagina, mensaje)
         fecha_ultimo_saludo = hoy
         registrar(f"Saludo diario enviado: {mensaje}")
+       
+        
+def contar_reclamos_pendientes():
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
+    cursor = conexion.cursor()
+    cursor.execute("SELECT COUNT(*) FROM reclamos WHERE estado = 'Pendiente'")
+    total = cursor.fetchone()[0]
+    conexion.close()
+    return total
+
+
+def verificar_recordatorio_tickets(pagina):
+    global fecha_ultimo_recordatorio
+    ahora = datetime.now()
+    hoy = ahora.date()
+
+    if ahora.hour == 14 and ahora.minute >= 50 and fecha_ultimo_recordatorio != hoy:
+        pendientes = contar_reclamos_pendientes()
+
+        if pendientes == 0:
+            fecha_ultimo_recordatorio = hoy
+            registrar("Recordatorio de tickets omitido: no hay reclamos pendientes.")
+            return
+
+        if pendientes == 1:
+            mensaje = "🫵 Recuerden cerrar sus tickets, hay 1 ticket pendiente."
+        else:
+            mensaje = f"🫵 Recuerden cerrar sus tickets, hay {pendientes} tickets pendientes."
+
+        enviar_mensaje_simple(pagina, mensaje)
+        fecha_ultimo_recordatorio = hoy
+        registrar(f"Recordatorio de tickets enviado: {mensaje}")
+
 
 def enviar_mensaje_con_mencion(pagina, texto_antes, nombre_busqueda, texto_despues=""):
     caja_mensaje = pagina.locator("footer div[contenteditable='true']")
@@ -255,6 +304,7 @@ def enviar_mensaje_con_mencion(pagina, texto_antes, nombre_busqueda, texto_despu
     pagina.wait_for_timeout(1000)
     return True, "OK"
 
+
 def abrir_grupo(pagina):
     buscador = pagina.get_by_role("textbox", name="Buscar un chat o iniciar uno nuevo")
     buscador.click()
@@ -269,6 +319,7 @@ def abrir_grupo(pagina):
         pagina.wait_for_timeout(500)
     except Exception as error:
         registrar(f"No se pudo limpiar el buscador (no crítico): {error}")
+
 
 def obtener_nombres_de_grupos(pagina):
     boton_grupos = pagina.get_by_text("Grupos", exact=False).first
@@ -288,6 +339,7 @@ def obtener_nombres_de_grupos(pagina):
     pagina.wait_for_timeout(1000)
     return nombres
 
+
 def clasificar_comando(texto):
     texto = texto.strip().lower()
     m = re.match(r'^estado\s*#?\s*(\d+)$', texto)
@@ -300,6 +352,7 @@ def clasificar_comando(texto):
     m = re.match(r'^historial\s+(.+)$', texto)
     if m: return ("historial", m.group(1).strip())
     return (None, None)
+
 
 def obtener_stock_toner():
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
@@ -315,6 +368,7 @@ def obtener_stock_toner():
     conexion.close()
     return filas
 
+
 def armar_respuesta_stock():
     filas = obtener_stock_toner()
     if not filas:
@@ -324,6 +378,7 @@ def armar_respuesta_stock():
         unidad = "unidad" if fila["stock_actual"] == 1 else "unidades"
         lineas.append(f"• {fila['nombre']}: {fila['stock_actual']} {unidad}")
     return "\n".join(lineas)
+
 
 def obtener_reclamo_por_id(id_reclamo):
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
@@ -342,6 +397,7 @@ def obtener_reclamo_por_id(id_reclamo):
     fila = cursor.fetchone()
     conexion.close()
     return fila
+
 
 def buscar_equipo(dato):
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
@@ -368,6 +424,7 @@ def buscar_equipo(dato):
     conexion.close()
     return fila
 
+
 def armar_respuesta_equipo(fila):
     if fila is None:
         return "No encontré ningún equipo con esa IP, MAC o número de serie. Verificá el dato e intentá de nuevo."
@@ -386,6 +443,7 @@ def armar_respuesta_equipo(fila):
         lineas.append(f"N° de serie: {fila['num_serie']}")
     return "\n".join(lineas)
 
+
 def obtener_historial_reclamos_equipo(equipo_id, limite=3):
     conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
     conexion.row_factory = sqlite3.Row
@@ -401,6 +459,7 @@ def obtener_historial_reclamos_equipo(equipo_id, limite=3):
     conexion.close()
     return filas
 
+
 def armar_respuesta_historial(fila_equipo, historial):
     if not historial:
         return f"El equipo {fila_equipo['codigo_equipo']} no tiene reclamos registrados en su historial."
@@ -408,6 +467,7 @@ def armar_respuesta_historial(fila_equipo, historial):
     for fila in historial:
         lineas.append(f"📅 {fila['fecha']}\n{fila['valor_nuevo']}\n")
     return "\n".join(lineas)
+
 
 def armar_respuesta_estado(id_reclamo):
     fila = obtener_reclamo_por_id(id_reclamo)
@@ -426,6 +486,7 @@ def armar_respuesta_estado(id_reclamo):
         if fila["fecha_resolucion"]:
             lineas.append(f"Fecha de resolución: {fila['fecha_resolucion']}")
     return "\n".join(lineas)
+
 
 def revisar_y_notificar(pagina, conexion_notif):
     todos_los_reclamos = obtener_reclamos_todos()
@@ -468,6 +529,7 @@ def revisar_y_notificar(pagina, conexion_notif):
         else:
             registrar(f"ADVERTENCIA: Reclamo {reclamo['id']} (reasignado) NO enviado. Motivo: {motivo}")
 
+
 def obtener_nombre_real_de_fila(texto_fila):
     """Devuelve la primera línea de la fila que no sea el indicador de 'no leído',
     porque a veces WhatsApp Web ordena ese texto antes del nombre del contacto."""
@@ -476,6 +538,7 @@ def obtener_nombre_real_de_fila(texto_fila):
         if linea and not re.search(r'mensaje.*no le[ií]do', linea, re.IGNORECASE):
             return linea
     return texto_fila.split("\n")[0].strip()
+
 
 def revisar_mensajes_privados(pagina):
     no_leidos = pagina.locator("[aria-label*='no leído']")
@@ -537,6 +600,7 @@ def revisar_mensajes_privados(pagina):
         abrir_grupo(pagina)
         pagina.wait_for_timeout(1000)
 
+
 # --- Programa principal (modo continuo) ---
 
 registrar("=== Bot de WhatsApp iniciado en modo continuo ===")
@@ -581,6 +645,10 @@ with sync_playwright() as p:
                     verificar_saludo_diario(pagina)
                 except Exception as e:
                     registrar(f"Error al enviar saludo diario: {e}")
+                try:
+                    verificar_recordatorio_tickets(pagina)
+                except Exception as e:
+                    registrar(f"Error al enviar recordatorio de tickets: {e}")
                 try:
                     revisar_y_notificar(pagina, conexion_notif)
                 except Exception as error:
