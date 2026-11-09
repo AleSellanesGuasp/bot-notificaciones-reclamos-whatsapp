@@ -249,6 +249,22 @@ def contar_reclamos_pendientes():
     return total
 
 
+def contar_pendientes_por_tecnico():
+    conexion = sqlite3.connect(f"file:{RUTA_BD}?mode=ro", uri=True)
+    cursor = conexion.cursor()
+    cursor.execute("""
+        SELECT t.nombre, COUNT(*) AS total
+        FROM reclamos r
+        JOIN tecnicos t ON r.tecnico_id = t.id
+        WHERE r.estado = 'Pendiente'
+        GROUP BY t.id
+        ORDER BY total DESC, t.nombre ASC
+    """)
+    filas = cursor.fetchall()
+    conexion.close()
+    return filas
+
+
 def verificar_recordatorio_tickets(pagina):
     global fecha_ultimo_recordatorio
     ahora = datetime.now()
@@ -266,6 +282,10 @@ def verificar_recordatorio_tickets(pagina):
             mensaje = "🫵 Recuerden cerrar sus tickets, hay 1 ticket pendiente."
         else:
             mensaje = f"🫵 Recuerden cerrar sus tickets, hay {pendientes} tickets pendientes."
+              
+        lineas_tecnicos = [f"{nombre} {total}" for nombre, total in contar_pendientes_por_tecnico()]
+        if lineas_tecnicos:
+            mensaje += "\n\n" + "\n".join(lineas_tecnicos)
 
         enviar_mensaje_simple(pagina, mensaje)
         fecha_ultimo_recordatorio = hoy
